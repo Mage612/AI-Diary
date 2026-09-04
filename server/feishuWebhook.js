@@ -221,17 +221,18 @@ function readFieldMap() {
 function buildReply(result, sync) {
   if (result.type === "SUMMARY") {
     return [
-      "\u6536\u5230\uff0c\u6211\u5df2\u7ecf\u5e2e\u4f60\u628a\u8fd9\u6761\u65e5\u8bb0\u6574\u7406\u597d\u4e86\u3002",
-      `\u65e5\u671f\uff1a${result.date}`,
-      result.summary ? `\u603b\u7ed3\uff1a${result.summary}` : "",
-      result.research ? `\u79d1\u7814\u5b66\u4e60\uff1a${result.research}` : "",
-      result.work ? `\u5de5\u4f5c\u6c42\u804c\uff1a${result.work}` : "",
-      result.growth ? `\u6280\u80fd\u6210\u957f\uff1a${result.growth}` : "",
-      result.happiness ? `\u5e78\u798f\u5c0f\u4e8b\uff1a${result.happiness}` : "",
-      result.emotion ? `\u60c5\u7eea\uff1a${result.emotion}` : "",
-      result.others ? `\u5176\u4ed6\uff1a${result.others}` : "",
-      result.reflection ? `\u590d\u76d8\uff1a${result.reflection}` : "",
-      result.tomorrow_plan ? `\u660e\u65e5\u5efa\u8bae\uff1a${result.tomorrow_plan}` : "",
+      "✅ 已整理今日总结",
+      "",
+      "📅 日期",
+      formatReplyDate(result.date),
+      summarySection("🧪 科研学习", result.research),
+      summarySection("💼 工作求职", result.work),
+      summarySection("🌱 技能成长", result.growth),
+      summarySection("😊 幸福小事", result.happiness),
+      summarySection("🧠 情绪复盘", result.emotion),
+      summarySection("📌 其他记录", result.others),
+      summarySection("📝 AI 今日总结", result.summary),
+      summarySection("🎯 明日建议", result.tomorrow_plan),
       syncLine(sync)
     ].filter(Boolean).join("\n");
   }
@@ -261,9 +262,34 @@ function buildReply(result, sync) {
 }
 
 function syncLine(sync) {
-  if (!sync?.configured) return "\u540c\u6b65\uff1a\u8fd8\u6ca1\u6709\u914d\u7f6e\u98de\u4e66\u591a\u7ef4\u8868\u683c\u3002";
-  if (sync.ok) return "\u540c\u6b65\uff1a\u5df2\u5199\u5165\u98de\u4e66\u591a\u7ef4\u8868\u683c\u3002";
-  return `\u540c\u6b65\uff1a\u5199\u5165\u8868\u683c\u5931\u8d25\uff0c\u4f46 AI \u56de\u590d\u5df2\u751f\u6210\u3002${sync.error ? ` ${sync.error}` : ""}`;
+  if (!sync?.configured) return "\n🔄 同步状态\n还没有配置飞书多维表格。";
+  if (sync.ok) return "\n🔄 同步状态\n已写入飞书多维表格。";
+  return `\n🔄 同步状态\n写入表格失败，但 AI 回复已生成。${sync.error ? ` ${sync.error}` : ""}`;
+}
+
+function summarySection(title, value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return `\n${title}\n${formatReplyBody(text)}`;
+}
+
+function formatReplyBody(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) return text;
+  return lines.map((line) => /^[-\d.、]/.test(line) ? line : `- ${line}`).join("\n");
+}
+
+function formatReplyDate(dateText) {
+  const match = String(dateText || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateText || todayText();
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  return `${match[1]}/${match[2]}/${match[3]} ${weekdays[date.getDay()]}`;
 }
 
 function buildHelpText(senderOpenId) {
