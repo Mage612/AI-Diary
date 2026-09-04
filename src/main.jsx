@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CalendarCheck, CheckSquare, Download, FileJson, Heart, ListTodo, MessageCircle, Pencil, Send, Table2, Trash2 } from "lucide-react";
+import { CalendarCheck, CheckSquare, Download, FileJson, Heart, KeyRound, ListTodo, LogOut, MessageCircle, Pencil, Send, Table2, Trash2 } from "lucide-react";
 import "./styles.css";
 
 const MESSAGE_KEY = "ai-dairy.messages.v0";
@@ -46,13 +46,18 @@ function App() {
   const [view, setView] = useState("chat");
   const [expandedDate, setExpandedDate] = useState("");
   const [pendingSummary, setPendingSummary] = useState(null);
+  const [session, setSession] = useState({ checked: false, protected: false, authenticated: false });
+  const [accessPassword, setAccessPassword] = useState("");
+  const [accessError, setAccessError] = useState("");
+  const [accessLoading, setAccessLoading] = useState(false);
   const listRef = useRef(null);
 
   useEffect(() => { localStorage.setItem(MESSAGE_KEY, JSON.stringify(messages)); listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
   useEffect(() => { localStorage.setItem(DAILY_KEY, JSON.stringify(dailyRecords)); }, [dailyRecords]);
   useEffect(() => { localStorage.setItem(DAY_PLANS_KEY, JSON.stringify(dayPlans)); }, [dayPlans]);
   useEffect(() => { localStorage.setItem(WEEK_PLANS_KEY, JSON.stringify(weekPlans)); }, [weekPlans]);
-  useEffect(() => { loadCloudDailyRecords(); }, []);
+  useEffect(() => { checkSession(); }, []);
+  useEffect(() => { if (session.checked && session.authenticated) loadCloudDailyRecords(); }, [session.checked, session.authenticated]);
 
   const placeholder = useMemo(() => {
     if (mode === "PLAN") return "例如：今天我要修改论文 intro，跑实验，准备面试";
@@ -60,6 +65,50 @@ function App() {
     if (mode === "CHAT") return "例如：我今天有点焦虑，不知道该先做什么";
     return "写下计划、总结或心情，我会自动判断。";
   }, [mode]);
+
+  async function checkSession() {
+    try {
+      const response = await fetch("/api/session");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setSession({ checked: true, protected: Boolean(data.protected), authenticated: Boolean(data.authenticated) });
+    } catch {
+      setSession({ checked: true, protected: false, authenticated: true });
+    }
+  }
+
+  async function submitAccess(event) {
+    event.preventDefault();
+    if (accessLoading) return;
+    setAccessError("");
+    setAccessLoading(true);
+    try {
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: accessPassword })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.authenticated) {
+        setAccessError("密码不对，再试一次。");
+        return;
+      }
+      setAccessPassword("");
+      setSession({ checked: true, protected: Boolean(data.protected), authenticated: true });
+    } catch {
+      setAccessError("登录暂时失败，请稍后再试。");
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
+  async function logout() {
+    try {
+      await fetch("/api/session", { method: "DELETE" });
+    } finally {
+      setSession((current) => ({ ...current, authenticated: !current.protected }));
+    }
+  }
 
   async function submit(event) {
     event?.preventDefault();
@@ -137,6 +186,20 @@ function App() {
     return response.json();
   }
 
+  if (!session.checked) return <AccessShell><div className="access-status">正在打开 AI&Diary...</div></AccessShell>;
+  if (session.protected && !session.authenticated) {
+    return <AccessShell>
+      <form className="access-form" onSubmit={submitAccess}>
+        <div className="access-icon"><KeyRound size={24} /></div>
+        <h1>AI&Diary</h1>
+        <p>输入访问密码后继续。</p>
+        <input type="password" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} placeholder="访问密码" autoFocus />
+        {accessError && <small>{accessError}</small>}
+        <button type="submit" disabled={accessLoading || !accessPassword.trim()}><KeyRound size={18} /><span>{accessLoading ? "验证中" : "进入日记"}</span></button>
+      </form>
+    </AccessShell>;
+  }
+
   return <main className="app">
     <header className="topbar">
       <div><h1>AI&Diary</h1><p>个人成长管理助手 V0.4</p></div>
@@ -144,6 +207,7 @@ function App() {
         <button className={view === "chat" ? "nav-button active" : "nav-button"} type="button" onClick={() => setView("chat")}><MessageCircle size={16} /><span>聊天</span></button>
         <button className={view === "actions" ? "nav-button active" : "nav-button"} type="button" onClick={() => setView("actions")}><CheckSquare size={16} /><span>行动板</span></button>
         <button className={view === "records" ? "nav-button active" : "nav-button"} type="button" onClick={() => setView("records")}><Table2 size={16} /><span>每日记录</span></button>
+        {session.protected && <button className="icon-button" type="button" title="退出登录" onClick={logout}><LogOut size={18} /></button>}
         <button className="icon-button" type="button" title="清空聊天" onClick={() => {
           if (window.confirm("只清空当前聊天记录，不会删除行动板和每日记录。确认清空吗？")) setMessages([]);
         }}><Trash2 size={18} /></button>
@@ -157,6 +221,10 @@ function App() {
       <div className="input-row"><textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) submit(event); }} placeholder={pendingSummary ? "请回复日期：今天、昨天、前天、8月7号、上周五" : placeholder} rows={2} /><button className="send" type="submit" disabled={loading || !text.trim()} title="发送"><Send size={19} /></button></div>
     </form>
   </main>;
+}
+
+function AccessShell({ children }) {
+  return <main className="access-page">{children}</main>;
 }
 
 function ChatView({ messages, loading, listRef }) {
