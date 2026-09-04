@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { processFeishuMessageEvent } from "./feishuWebhook.js";
+import { enqueueFeishuMessageEvent } from "./feishuWebhook.js";
 
 loadEnvFile();
 
@@ -21,8 +21,8 @@ const wsClient = new Lark.WSClient({
 });
 
 const dispatcher = new Lark.EventDispatcher({}).register({
-  "im.message.receive_v1": async (data) => {
-    await processFeishuMessageEvent(data);
+  "im.message.receive_v1": (data) => {
+    enqueueFeishuMessageEvent(data);
   }
 });
 

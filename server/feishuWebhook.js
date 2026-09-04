@@ -1,4 +1,5 @@
 import { handleChat } from "./apiHandlers.js";
+import { claimFeishuMessage } from "./services/feishuMessageDedupe.js";
 import {
   createFeishuBitableRecord,
   hasFeishuBitableConfig,
@@ -34,8 +35,26 @@ export async function handleFeishuWebhook(payload = {}) {
     return { status: 200, body: { ok: true, ignored: eventType || "unknown_event" } };
   }
 
-  await processFeishuMessageEvent(payload.event || {});
-  return { status: 200, body: { ok: true } };
+  const event = {
+    ...(payload.event || {}),
+    _feishu_event_id: payload.header?.event_id || ""
+  };
+
+  if (!shouldProcessWebhookAsync()) {
+    await processFeishuMessageEvent(event);
+    return { status: 200, body: { ok: true } };
+  }
+
+  enqueueFeishuMessageEvent(event);
+  return { status: 200, body: { ok: true, accepted: true } };
+}
+
+export function enqueueFeishuMessageEvent(event = {}) {
+  setTimeout(() => {
+    processFeishuMessageEvent(event).catch((error) => {
+      console.error("[feishu] background processing failed", error);
+    });
+  }, 0);
 }
 
 export async function processFeishuMessageEvent(event = {}) {
@@ -47,6 +66,12 @@ export async function processFeishuMessageEvent(event = {}) {
   if (!isAllowedSender(senderOpenId)) {
     console.log(`[feishu] ignored sender ${senderOpenId}`);
     return { ok: true, ignored: "sender_not_allowed" };
+  }
+
+  const dedupe = claimFeishuMessage(event);
+  if (!dedupe.claimed) {
+    console.log(`[feishu] duplicate message skipped (${dedupe.reason}): ${dedupe.key}`);
+    return { ok: true, duplicate: true };
   }
 
   if (message.message_type !== "text") {
@@ -100,6 +125,11 @@ function resolveMessageMode(text) {
   const command = trimmed.match(/^\/(summary|plan|chat)\s+([\s\S]+)/i);
   if (!command) return { mode: process.env.FEISHU_DEFAULT_MODE || "SUMMARY", content: trimmed };
   return { mode: command[1].toUpperCase(), content: command[2].trim() };
+}
+
+function shouldProcessWebhookAsync() {
+  if (String(process.env.FEISHU_ASYNC_PROCESSING || "").toLowerCase() === "false") return false;
+  return !process.env.VERCEL;
 }
 
 function extractTextMessage(content) {
