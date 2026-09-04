@@ -33,6 +33,18 @@ export async function sendFeishuText(chatId, text) {
   });
 }
 
+export async function sendFeishuInteractiveCard(chatId, card) {
+  if (!chatId || !hasFeishuAppConfig()) return null;
+  return feishuRequest("/im/v1/messages?receive_id_type=chat_id", {
+    method: "POST",
+    body: {
+      receive_id: chatId,
+      msg_type: "interactive",
+      content: JSON.stringify(card)
+    }
+  });
+}
+
 export async function createFeishuBitableRecord(fields) {
   if (!hasFeishuBitableConfig()) return null;
   const appToken = encodeURIComponent(await getBitableAppToken());

@@ -3,6 +3,7 @@ import { claimFeishuMessage } from "./services/feishuMessageDedupe.js";
 import {
   createFeishuBitableRecord,
   hasFeishuBitableConfig,
+  sendFeishuInteractiveCard,
   sendFeishuText,
   verifyFeishuToken
 } from "./services/feishuClient.js";
@@ -110,7 +111,7 @@ export async function processFeishuMessageEvent(event = {}) {
       }
     }
 
-    await sendFeishuText(chatId, buildReply(result, sync));
+    await sendFeishuReply(chatId, result, sync);
     console.log("[feishu] reply sent");
   } catch (error) {
     console.error(error);
@@ -118,6 +119,20 @@ export async function processFeishuMessageEvent(event = {}) {
   }
 
   return { ok: true };
+}
+
+async function sendFeishuReply(chatId, result, sync) {
+  if (result.type !== "SUMMARY" || process.env.FEISHU_REPLY_CARD === "false") {
+    await sendFeishuText(chatId, buildReply(result, sync));
+    return;
+  }
+
+  try {
+    await sendFeishuInteractiveCard(chatId, buildSummaryCard(result, sync));
+  } catch (error) {
+    console.error(`[feishu] card reply failed, fallback to text: ${error.message}`);
+    await sendFeishuText(chatId, buildReply(result, sync));
+  }
 }
 
 function resolveMessageMode(text) {
@@ -261,26 +276,103 @@ function buildReply(result, sync) {
   ].filter(Boolean).join("\n");
 }
 
+function buildSummaryCard(result, sync) {
+  const sections = [
+    ["🧪 科研学习", result.research],
+    ["💼 工作求职", result.work],
+    ["🌱 技能成长", result.growth],
+    ["😊 幸福小事", result.happiness],
+    ["🧠 情绪复盘", result.emotion],
+    ["📌 其他记录", result.others],
+    ["📝 总结", result.summary],
+    ["🎯 明日建议", result.tomorrow_plan]
+  ].map(([title, value]) => cardSection(title, value)).filter(Boolean);
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: "turquoise",
+      title: { tag: "plain_text", content: "✅ AI-Diary 今日总结" }
+    },
+    elements: [
+      {
+        tag: "div",
+        text: {
+          tag: "lark_md",
+          content: `**📅 日期**\n${formatReplyDate(result.date)}`
+        }
+      },
+      { tag: "hr" },
+      ...sections,
+      { tag: "hr" },
+      {
+        tag: "note",
+        elements: [{ tag: "plain_text", content: syncStatusText(sync) }]
+      },
+      ...cardActions()
+    ]
+  };
+}
+
+function cardSection(title, value) {
+  const content = formatNumberedReplyBody(value);
+  if (!content) return null;
+  return {
+    tag: "div",
+    text: {
+      tag: "lark_md",
+      content: `**${title}**\n${content}`
+    }
+  };
+}
+
+function cardActions() {
+  const bitableUrl = process.env.FEISHU_BITABLE_URL || process.env.FEISHU_TABLE_URL || "";
+  if (!bitableUrl) return [];
+  return [{
+    tag: "action",
+    actions: [{
+      tag: "button",
+      text: { tag: "plain_text", content: "查看表格" },
+      type: "primary",
+      url: bitableUrl
+    }]
+  }];
+}
+
 function syncLine(sync) {
-  if (!sync?.configured) return "\n🔄 同步状态\n还没有配置飞书多维表格。";
-  if (sync.ok) return "\n🔄 同步状态\n已写入飞书多维表格。";
-  return `\n🔄 同步状态\n写入表格失败，但 AI 回复已生成。${sync.error ? ` ${sync.error}` : ""}`;
+  return `\n🔄 同步状态\n${syncStatusText(sync)}`;
+}
+
+function syncStatusText(sync) {
+  if (!sync?.configured) return "还没有配置飞书多维表格。";
+  if (sync.ok) return "已写入飞书多维表格。";
+  return `写入表格失败，但 AI 回复已生成。${sync.error ? ` ${sync.error}` : ""}`;
 }
 
 function summarySection(title, value) {
   const text = String(value || "").trim();
   if (!text) return "";
-  return `\n${title}\n${formatReplyBody(text)}`;
+  return `\n${title}\n${formatNumberedReplyBody(text)}`;
 }
 
-function formatReplyBody(text) {
-  const lines = text
+function formatNumberedReplyBody(text) {
+  const items = splitReplyItems(text);
+  if (!items.length) return "";
+  return items.map((item, index) => `${index + 1}. ${stripListPrefix(item)}`).join("\n");
+}
+
+function splitReplyItems(text) {
+  return String(text || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
+    .flatMap((line) => line.split(/(?<=[。；;])\s*/))
+    .map((line) => stripListPrefix(line).trim())
     .filter(Boolean);
+}
 
-  if (lines.length <= 1) return text;
-  return lines.map((line) => /^[-\d.、]/.test(line) ? line : `- ${line}`).join("\n");
+function stripListPrefix(text) {
+  return String(text || "").replace(/^[-*•\d.、\s]+/, "").trim();
 }
 
 function formatReplyDate(dateText) {
